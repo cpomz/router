@@ -77,7 +77,40 @@ void sr_handlepacket(struct sr_instance* sr,
   assert(interface);
 
   printf("*** -> Received packet of length %d \n",len);
+  //general header size
+  if(len < sizeof(sr_ethernet_hdr_t)){
+	fprintf(stderr, "Error: ethernet header size is too small\n");
+	return -1;
+  }
+  uint16_t ethtype = ethertype(packet);
+  //THIS IS IP
+  if (ethtype==ethertype_ip)
+  {
+  unsigned int next_hdr = sizeof(sr_ethernet_hdr_t);
+  //Check length of IP header
+  if(len < next_hdr + sizeof(sr_ip_hdr_t))
+  {
+	fprintf(stderr, "IP header has insufficient length\n");
+	return -1;
+  }
+  printf("*** -> Processing IP Packet\n");
+  sr_ip_hdr_t *req_ip = (sr_ip_hdr_t *)(packet + next_hdr);
 
+  uint16_t req_cksum = req_ip->ip_sum;
+  req_ip->ip_sum = 0;
+	//Checksum
+  if (cksum(packet + next_hdr, sizeof(sr_ip_hdr_t)) != req_cksum) {
+    fprintf(stderr, "Error: IP header - invalid checksum\n");
+    return -1;
+  }
+  //TODO
+  }
+  else if (ethtype==ethertype_arp){
+		//TODO
+  }
+  else{
+	fprintf(stderr, "Error: Unkown ethernet type: %d\n",ethtype);
+  }
   /* fill in code here */
 
 }/* end sr_ForwardPacket */
