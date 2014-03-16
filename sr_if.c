@@ -192,3 +192,30 @@ void sr_print_if(struct sr_if* iface)
     Debug("\n");
     Debug("\tinet addr %s\n",inet_ntoa(ip_addr));
 } /* -- sr_print_if -- */
+/*---------------------------------------------------------------------
+ * Method: sr_find_interface
+ *
+ * Finds interface by ip
+ *---------------------------------------------------------------------*/
+
+struct sr_if* sr_find_interface(struct sr_instance* sr, uint32_t ip_dst) {
+    /* Requires */
+    assert(sr);
+
+    if (sr->if_list == 0) {
+        printf(" Interface list empty\n");
+        return NULL;
+    }
+
+    struct sr_if* if_entry = sr->if_list;
+
+    while (if_entry) {
+        /* Check for matching IP */
+        if (ip_dst == if_entry->ip) {
+            /* Interface found */
+            return if_entry;
+        }
+        if_entry = if_entry->next;
+    }
+    return NULL;
+} /* -- sr_find_interface -- */

@@ -103,7 +103,9 @@ typedef struct sr_icmp_t3_hdr sr_icmp_t3_hdr_t;
 
 
 
-
+#ifndef IP_ADDR_LEN
+#define IP_ADDR_LEN 4
+#endif
 /*
  * Structure of an internet header, naked of options.
  */

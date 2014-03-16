@@ -65,6 +65,7 @@ int sr_connect_to_server(struct sr_instance* ,unsigned short , char* );
 int sr_read_from_server(struct sr_instance* );
 
 /* -- sr_router.c -- */
+const char* find_interface(struct sr_instance* sr,unsigned char addr[ETHER_ADDR_LEN]);
 void sr_init(struct sr_instance* );
 void sr_handlepacket(struct sr_instance* , uint8_t * , unsigned int , char* );
 

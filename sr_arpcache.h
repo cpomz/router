@@ -96,6 +96,7 @@ struct sr_arpreq {
     uint32_t times_sent;        /* Number of times this request was sent. You 
                                    should update this. */
     struct sr_packet *packets;  /* List of pkts waiting on this req to finish */
+    char* interface; /*added a new field in order to get request handling to work*/
     struct sr_arpreq *next;
 };
 
@@ -105,6 +106,10 @@ struct sr_arpcache {
     pthread_mutex_t lock;
     pthread_mutexattr_t attr;
 };
+
+
+/*helper function for sr_arpcache_lookup*/
+void handle_arpreq(struct sr_instance* sr,struct sr_arpreq* request);
 
 /* Checks if an IP->MAC mapping is in the cache. IP is in network byte order. 
    You must free the returned structure if it is not NULL. */
