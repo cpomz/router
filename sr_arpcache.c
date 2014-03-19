@@ -21,112 +21,77 @@
 
 void handle_arpreq(struct sr_instance* sr,struct sr_arpreq* request)
 {
-	time_t now = time(0); /*get system time*/
-	if (difftime(now,request->sent) > 1.0)
-	{
-	   if(request->times_sent >= 5)
-	   {
-		/*send icmp host unreachable to source addr of all pkts*/
-		/*waiting on this request*/
-		struct sr_packet* iter = request->packets;
-		
-		while(iter) /*for each packet in the packet list*/
-		{
+	int etherLen = sizeof(sr_ethernet_hdr_t); //ethernet header size
+  int ipLen = sizeof(sr_ip_hdr_t); //ip header length
+  int arpLen  = sizeof(sr_arp_hdr_t); //arp header length
+  printf("(Timer) Processing ARP Request from Queue\n");
 
-		   /*initialize ICMP packet*/
-		   unsigned int packet_len = sizeof(sr_ethernet_hdr_t)+sizeof(sr_ip_hdr_t)+sizeof(sr_icmp_hdr_t);
-		   uint8_t *packet_buf = (uint8_t*)malloc(packet_len);
- 
-	
-		   /*find the ethernet header field of the packet to extract the source address*/
-		   sr_ethernet_hdr_t* ether_header = (sr_ethernet_hdr_t*) (iter->buf);
-		   unsigned char srcAddr[ETHER_ADDR_LEN];
-		   memcpy(srcAddr,ether_header->ether_shost,ETHER_ADDR_LEN);
-		   char iname[sr_IFACE_NAMELEN]; /*name of the destination interface*/
-		   strcpy(iname,find_interface(sr,srcAddr));		
-		 
-	           /*source address becomes destination address of ICMP packet*/
-	           sr_ethernet_hdr_t* icmp_ether_header = (sr_ethernet_hdr_t*) packet_buf;
-		   /*struct sr_if* src_interface = sr_get_interface(sr,sr->host);*/ /*find source host interface*/
-		   memcpy(icmp_ether_header->ether_dhost,ether_header->ether_shost,ETHER_ADDR_LEN); /*copy destination address*/
-		   memcpy(icmp_ether_header->ether_shost,ether_header->ether_dhost,ETHER_ADDR_LEN); /*source of icmp packet is destination of packet*/
-		   icmp_ether_header->ether_type |= ethertype_ip; /*ICMP is carried via ip*/
+  time_t now = time(NULL);
+  if (difftime(now, request->sent) >= 1.0) {
+    if (request->times_sent >= 5) {
+      // Send ICMP host unreachable to source address of all packets waiting
+      //    on this request
+      
+      printf("(Timer) Request Host unreachable\n");
 
-		   /*find ip_header field of the packet*/
-		   sr_ip_hdr_t* ip_header = (sr_ip_hdr_t*) (iter->buf+sizeof(sr_ethernet_hdr_t));
-		   
- 		   /*initialize ip_header field of icmp packet*/
- 		   sr_ip_hdr_t* icmp_ip_header = (sr_ip_hdr_t*) (packet_buf+sizeof(sr_ethernet_hdr_t));
-		   icmp_ip_header->ip_len = sizeof(sr_ip_hdr_t)+sizeof(sr_icmp_t3_hdr_t); /*the only data will be icmp type3 header packet;*/
-		   icmp_ip_header->ip_p |= ip_protocol_icmp; /*upper layer protocol is icmp protocol*/
-		   icmp_ip_header->ip_src = ip_header->ip_dst;
-		   icmp_ip_header->ip_dst = ip_header->ip_src;
-		   icmp_ip_header->ip_ttl = 255; /*maximum allowed TTL value for IPv4*/
-  		   icmp_ip_header->ip_sum = 0; /*initially 0 before computing checksum*/
- 		   icmp_ip_header->ip_sum = cksum(icmp_ip_header,sizeof(sr_ip_hdr_t)); /*then calculate checksum*/
- 
-		   /*now initialize icmp type3 header field of the icmp packet*/
-		   sr_icmp_hdr_t* icmp3_header = (sr_icmp_hdr_t*) (packet_buf+sizeof(sr_ethernet_hdr_t)+sizeof(sr_ip_hdr_t));
-		   icmp3_header->icmp_type = 3; /*icmp type3*/
-		   icmp3_header->icmp_code = 1; /*destination host unreachable*/
-		   icmp3_header->icmp_sum = 0; /*checksum field initially 0*/
-		   icmp3_header->icmp_sum = cksum(icmp3_header,sizeof(sr_icmp_hdr_t)); /*then calculate checksum*/
+      struct sr_packet *pkt;
+      for (pkt = request->packets; pkt != NULL; pkt = pkt->next) {
 
-		   sr_send_packet(sr,packet_buf,packet_len,iname);
- 
-		   iter = iter->next;
-		}
-		/*destroy the request*/
-		sr_arpreq_destroy(&(sr->cache),request);
-	   }
+        //Create IP Packet 
+        sr_ip_hdr_t *req_ip = (sr_ip_hdr_t *)(pkt->buf + etherLen);
 
-	   else
-	   {
-		/*send arp request*/
+        if (send_icmp_packet(
+            sr, 3, 1, req_ip->ip_src, (uint8_t *)req_ip, pkt->iface) == -1) {
+          fprintf(stderr, "Failure sending ICMP message\n");
+        }
+      }
 
-		/*build an arp packet*/
-                unsigned int packet_len = sizeof(sr_ethernet_hdr_t)+sizeof(sr_arp_hdr_t);
-		uint8_t* packet_buf = (uint8_t*) malloc(packet_len);
-	 	sr_ethernet_hdr_t* arp_ether_header = (sr_ethernet_hdr_t*) (packet_buf);
-		int i;
- 		for (i = 0; i < ETHER_ADDR_LEN; i++)
-		{
-			/*destination address is broadcast address*/
-			arp_ether_header->ether_dhost[i] = 0xff;
-		}	
+      // Destroy ARP request 
+      sr_arpreq_destroy(&(sr->cache), request);
+    } else {
+      // Send an ARP request 
+      int len = etherLen + arpLen;
+      uint8_t* frame = malloc(len);
+      sr_ethernet_hdr_t* ether_header = (struct sr_ethernet_hdr*) frame;
+      sr_arp_hdr_t* arp_frame = (sr_arp_hdr_t*) (frame +etherLen);
+      struct sr_if* iface = sr_get_interface(sr, request->interface);
 
-		/*finding source hardware / ip address of arp packet*/
-		struct sr_if* iface = sr_get_interface(sr,sr->host);
-		/*source hardware address*/
-		memcpy(arp_ether_header->ether_shost,iface->addr,ETHER_ADDR_LEN);
-		arp_ether_header->ether_type |= ethertype_arp; /*ARP type*/ 	
-			
-		/*build arp header of the arp packet*/
-		sr_arp_hdr_t* arp_header = (sr_arp_hdr_t*) (packet_buf+sizeof(sr_ethernet_hdr_t));
-		arp_header->ar_tip = request->ip; /*next hop ip address*/
-		memcpy(arp_header->ar_tha,arp_ether_header->ether_dhost,ETHER_ADDR_LEN); 	/*target hardware address (should be ff-ff-ff-ff-ff-ff)*/
-		arp_header->ar_sip = iface->ip; /*sender ip address*/
-		memcpy(arp_header->ar_sha,iface->addr,ETHER_ADDR_LEN);	/*sender hardware address*/
-		arp_header->ar_tip = request->ip; /*arp request ip address is stored as target ip address*/
-		arp_header->ar_op |= arp_op_request; /*operation is request*/
-		arp_header->ar_hrd = 1; /*ethernet*/
-		arp_header->ar_pro |=  0x0800; /*IPv4*/
-		arp_header->ar_hln = 6; /*length of ethernet address*/
-		arp_header->ar_pln = 4; /*length of IPv4 address*/
+      // Debug 
+      printf("(Timer) Re-sending ARP Request: ");
+      print_addr_ip_int(ntohl(request->ip));
 
-		/*send the ARP request to all the available interfaces, since arp is broadcasting*/
-		struct sr_if* if_walker = sr->if_list;
-		
-		while (if_walker)
-		{	
-			sr_send_packet(sr,packet_buf,packet_len,if_walker->name);		
-			if_walker = if_walker->next;
- 		} 
-		request->sent = now; /*reset time*/
-                request->times_sent++;  /*increment # times sent*/
+      // Set Ethernet type to ARP 
+      ether_header->ether_type = htons(ethertype_arp);
+      arp_frame->ar_hrd = htons(arp_hrd_ethernet);
+      arp_frame->ar_pro = htons(ethertype_ip);
+      arp_frame->ar_hln = ETHER_ADDR_LEN;
+      arp_frame->ar_pln = IP_ADDR_LEN;
+      arp_frame->ar_op = htons(arp_op_request);
 
-           }
-	}	
+      // Set source data 
+      arp_frame->ar_sip = iface->ip;
+      memcpy(arp_frame->ar_sha, iface->addr, ETHER_ADDR_LEN);
+      memcpy(ether_header->ether_shost, iface->addr, ETHER_ADDR_LEN);
+      
+      // Set target data 
+      arp_frame->ar_tip = request->ip;
+      int i;
+      for (i = 0; i < ETHER_ADDR_LEN; i++) {
+        arp_frame->ar_tha[i] = 0xFF;
+        ether_header->ether_dhost[i] = 0xFF;
+      }
+
+      // Send the request 
+      printf("Sending out ARP Request\n");
+      sr_send_packet(sr, frame, len, iface->name);
+      free(frame);
+
+      // Increment request information
+      request->sent = now;
+      request->times_sent++;
+    }
+  }
+  return 0;
 }
 
 

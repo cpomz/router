@@ -234,9 +234,6 @@ int process_ip_packet(
       // Set response length equal to request's 
       uint16_t reply_pkt_len = len;
 
-      // TODO(Tim): This code looks redundant.  We should probably use
-      //    send_icmp_packet to send the ping so we don't do all of
-      //    this repeated work.  DRY DRY DRY
       
       //construct icmp echo reply packet
       uint8_t* reply_buf = (uint8_t *)malloc(reply_pkt_len);
@@ -516,103 +513,6 @@ int send_packet_to_ip_addr(struct sr_instance* sr,
 }
 
 
-/*helper function to find the name of the interface given its MAC address*/
-const char* find_interface(struct sr_instance* sr,unsigned char addr[ETHER_ADDR_LEN])
-{
-	struct sr_if* iter = sr->if_list;
-	while (iter)
-	{	
-		/*found the address*/
-		if (memcmp(addr,iter->addr,ETHER_ADDR_LEN) == 0)
-		{ return iter->name;}
-		iter = iter->next;
-	}	
-
-	return 0; /*interface not found*/
-}
-
-void icmp_handler(struct sr_instance* sr,uint8_t* pkt,char* interface,uint8_t type,uint8_t code)
-{
-  	int ipLen,etherLen,icmpLen3,totalLen;
-	ipLen = sizeof(sr_ip_hdr_t);
-	etherLen = sizeof(sr_ethernet_hdr_t);
-	icmpLen3 = sizeof(sr_icmp_t3_hdr_t);
-	totalLen = ipLen+etherLen+icmpLen3;
-	
-	/*extract information from input packet*/
-	/*sr_ethernet_hdr_t* ether_header = (sr_ethernet_hdr_t*) pkt;*/
-	sr_ip_hdr_t* ip_header = (sr_ip_hdr_t*) (pkt+etherLen); 
-
-	/*construct icmp reply packet*/
-	unsigned int reply_pkt_len = etherLen+ipLen+icmpLen3;
-	uint8_t* reply_buf = (uint8_t*)malloc(reply_pkt_len);
-		
-	struct sr_if* riface = sr_get_interface(sr,interface);
-	/*construct icmp port unreachable ip header*/
-	sr_ip_hdr_t* reply_ip_hdr = (sr_ip_hdr_t*) (reply_buf+etherLen);
-	reply_ip_hdr->ip_len = htons(ipLen+icmpLen3); /*ip header + data*/
-	reply_ip_hdr->ip_v = 4;
-	reply_ip_hdr->ip_hl = 5;
-	reply_ip_hdr->ip_ttl = 100;
-	/*don't fragement. id = 0*/
-	reply_ip_hdr->ip_off = htons(IP_DF);
-	reply_ip_hdr->ip_id = htons(0);
-	reply_ip_hdr->ip_p = ip_protocol_icmp;
-	reply_ip_hdr->ip_src = riface->ip; 
-	reply_ip_hdr->ip_dst = ip_header->ip_src;  
-	reply_ip_hdr->ip_sum = 0;  /*initially 0*/
-	reply_ip_hdr->ip_sum = cksum(reply_buf+etherLen,ipLen); /*recompute checksum*/
-				
-	/*construct icmp port unreachable icmp header*/
-	sr_icmp_t3_hdr_t* reply_icmp_hdr = (sr_icmp_t3_hdr_t*) (reply_buf+etherLen+ipLen);
-	reply_icmp_hdr->icmp_type = type;
-	reply_icmp_hdr->icmp_code = code;
-	/*unused and mtu values are irrelevant. can be set to 0*/
-	reply_icmp_hdr->unused = 0;
-	reply_icmp_hdr->next_mtu = 0;
-	memcpy(reply_icmp_hdr->data,pkt+etherLen,ICMP_DATA_SIZE);
-	reply_icmp_hdr->icmp_sum  = 0; /*initially 0*/
-	reply_icmp_hdr->icmp_sum = cksum(reply_buf+etherLen+ipLen,icmpLen3);	   
-	
-	/*find routing table entry with longest prefix matching to destination ip address*/					   struct sr_rt* lentry = entry_with_longest_prefix(sr,reply_ip_hdr->ip_dst);
-	if (!lentry)
-	{
-		perror("Error: cannot route to the receiver\n");
-		exit(1);
-	}
-	/*find interface corresponding to the routing table entry*/
-	struct sr_if* src_iface = sr_get_interface(sr,lentry->interface);
-	/*find ip to mac mapping*/
-	struct sr_arpentry* arpentry = sr_arpcache_lookup(&(sr->cache),reply_ip_hdr->ip_dst);
-	if (arpentry)
-	{
-		/*build ethernet header*/
-		sr_ethernet_hdr_t* reply_ether_hdr = (sr_ethernet_hdr_t*) reply_buf;
-		/*source interface*/
-		memcpy(reply_ether_hdr->ether_shost,src_iface->addr,ETHER_ADDR_LEN);
-		/*using longest prefix matching ip to mac mapping*/
-		memcpy(reply_ether_hdr->ether_dhost,arpentry->mac,ETHER_ADDR_LEN);
-		/*host byte to network byte conversion*/
-		reply_ether_hdr->ether_type = htons(ethertype_ip);
-		/*send packet*/
-		sr_send_packet(sr,reply_buf,reply_pkt_len,lentry->interface);
-		/*free arpentry*/
-		free(arpentry);
-		
-	}
-
-	else
-	{
-		/*build ethernet header*/
-		sr_ethernet_hdr_t* reply_ether_hdr = (sr_ethernet_hdr_t*) reply_buf;
-		reply_ether_hdr->ether_type = htons(ethertype_ip);
-		struct sr_arpreq* request = sr_arpcache_queuereq(&(sr->cache),reply_ip_hdr->ip_dst,reply_buf,totalLen,lentry->interface);
-		request->interface = lentry->interface;
-		handle_arpreq(sr,request);	
-
-	}	
-	return;
-}
 
 /*---------------------------------------------------------------------
  * Method: sr_init(void)
